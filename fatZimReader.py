@@ -46,7 +46,7 @@ class ArticleParser:
         if not content:
             return [urwid.Text("Could not parse article content")]
         
-        for tag in content.find_all(['script', 'style', 'table', 'sup']):
+        for tag in content.find_all(['script', 'style', 'sup', 'table']):
             tag.decompose()
         
         self.text_widgets = []
@@ -78,43 +78,49 @@ class ArticleParser:
                 self._process_list(child)
             elif child.name == 'div':
                 self._process_element(child)
+            elif child.name == 'table':
+                pass
+                # self._process_table(child)
+            elif child.name == 'a':
+                self._process_link(child)
+
+    def _process_link(self, link_elem):
+        """Process standalone links"""
+        href = link_elem.get('href', '')
+        is_external = (
+            href.startswith('http://') or 
+            href.startswith('https://') or 
+            href.startswith('//') or
+            href.startswith('#') or
+            href.startswith('mailto:')
+        )
+        
+        if not is_external:
+            link_path = href.split('#')[0]
+            link_path = parse.unquote(link_path.replace('../', '').replace('/wiki/', '').replace(' ', '_'))
+            if link_path:
+                link_text = link_elem.get_text().strip()
+                if link_text:
+                    link_index = len(self.links)
+                    self.links.append((link_path, link_text))          
+                    link_widget = SelectableText(('link', f"→ [{link_text}]"))
+                    link_widget.link_path = link_path
+                    link_widget.link_index = link_index
+                    link_mapped = urwid.AttrMap(link_widget, 'link', focus_map='link_focus')
+                    link_mapped.link_path = link_path
+                    link_mapped.link_index = link_index
+                    self.text_widgets.append(link_mapped)
+                    self.link_widgets.append(link_mapped)
     
     def _process_paragraph(self, para):
         """Process paragraph with inline links"""
-        para_links = []
-        for link in para.find_all('a', href=True):
-            href = link.get('href', '')
-            is_external = (
-                href.startswith('http://') or 
-                href.startswith('https://') or 
-                href.startswith('//') or
-                href.startswith('#') or
-                href.startswith('mailto:')
-            )
-            
-            if not is_external:
-                link_path = href.split('#')[0]
-                link_path = parse.unquote(link_path.replace('../', '').replace('/wiki/', '').replace(' ', '_'))
-                if link_path:
-                    link_text = link.get_text()
-                    link_index = len(self.links)
-                    self.links.append((link_path, link_text))
-                    para_links.append((link_index, link_path, link_text))
-        
         para_text = para.get_text().strip()
         
         if para_text:
             self.text_widgets.append(urwid.Text(para_text))
             
-            for link_index, link_path, link_text in para_links:
-                link_widget = SelectableText(('link', f"  → [{link_text}]"))
-                link_widget.link_path = link_path
-                link_widget.link_index = link_index
-                link_mapped = urwid.AttrMap(link_widget, 'link', focus_map='link_focus')
-                link_mapped.link_path = link_path
-                link_mapped.link_index = link_index
-                self.text_widgets.append(link_mapped)
-                self.link_widgets.append(link_mapped)
+            for link_elem in para.find_all('a', href=True):
+                self._process_link(link_elem)
     
     def _process_list(self, list_elem):
         """Process lists"""
@@ -122,6 +128,13 @@ class ArticleParser:
             text = li.get_text().strip()
             if text:
                 self.text_widgets.append(urwid.Text(f"  • {text}"))
+
+    def _process_table(self, table_elem):
+        pass
+        # df_list = pd.read_html(str(table_elem))
+        # if df_list:
+        #     df = df_list[0]
+        #     self.text_widgets.append(urwid.Text(df.to_string(index=False)))
 
 
 class SelectableText(urwid.Text):
@@ -216,7 +229,7 @@ class WikiApp:
             self.content_walker.focus_position = 1
         
         self.mode = self.MODE_RESULTS
-        self.update_status("Mode: Results | ↑↓: Navigate | Enter or →: Select | /: Search | r: Random | q: Quit")
+        self.update_status("Mode: Results | ↑↓: Navigate | ↵ or →: Select | /: Search | r: Random | q: Quit")
     
     def load_article(self, path):
         """Load and display an article"""
@@ -248,7 +261,7 @@ class WikiApp:
         
         link_count = len(self.current_links)
         self.update_status(
-            f"Mode: Article | {link_count} links | ↑↓: Navigate | →: Follow | ←: Back | Space: Page Down | /: Search | r: Random | q: Quit"
+            f"Mode: Article | {link_count} links | ↑↓: Navigate | ↵ or →: Follow | ←: Back | Space: Page Down | /: Search | r: Random | q: Quit"
         )
     
     def handle_input(self, key):
@@ -282,7 +295,7 @@ class WikiApp:
                     self.history.pop()
                     self.load_article(self.history[-1])
                     self.history.pop()
-            elif key == 'right':
+            elif key == 'right' or key == 'enter':
                 focused_widget, focus_pos = self.content_walker.get_focus()
                 
                 if hasattr(focused_widget, 'link_path'):
