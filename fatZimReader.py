@@ -1,15 +1,12 @@
-import warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-
 import urwid
 from libzim.reader import Archive
 from libzim.search import Query, Searcher
 from bs4 import BeautifulSoup
-
+from urllib import parse
 
 class ZimManager:
     """Handles ZIM file operations"""
-    
+
     def __init__(self, zim_path):
         self.archive = Archive(zim_path)
         self.searcher = Searcher(self.archive)
@@ -28,7 +25,7 @@ class ZimManager:
             html_content = bytes(entry.get_item().content).decode("UTF-8")
             return entry.title, html_content
         except Exception as e:
-            return None, f"Error: {e}"
+            return None, f"Error: {e} {path}"
 
 
 class ArticleParser:
@@ -97,7 +94,7 @@ class ArticleParser:
             
             if not is_external:
                 link_path = href.split('#')[0]
-                link_path = link_path.replace('../', '').replace('/wiki/', '')
+                link_path = parse.unquote(link_path.replace('../', '').replace('/wiki/', '').replace(' ', '_'))
                 if link_path:
                     link_text = link.get_text()
                     link_index = len(self.links)
@@ -163,23 +160,29 @@ class WikiApp:
             ('status', 'white', 'dark gray'),
         ]
         
-        self.setup_ui()
+        self.setup_ui(zim_path)
     
-    def setup_ui(self):
+    def setup_ui(self, zim_path):
         """Initialize the UI"""
         self.search_edit = urwid.Edit("Search: ")
         search_box = urwid.AttrMap(
-            urwid.LineBox(self.search_edit, title="ZIM Wikipedia Reader"),
+            urwid.LineBox(self.search_edit, title="fatZimReader"),
             'search_box'
         )
         
         self.content_walker = urwid.SimpleFocusListWalker([
-            urwid.Text("Enter a search term and press Enter\n"),
-            urwid.Text("Press 'q' to quit")
+            urwid.Text("\nWelcome to fatZimReader, a fully offline, terminal based, zim file browser"),
+            urwid.Text("Created by Finn Cullen (fatcullen)\n"),
+            urwid.Text("FILE INFO:"),
+            urwid.Text(f"  Title: {zim_path}"),
+            urwid.Text(f"  File Size: {self.zim.archive.filesize / (1024*1024):.2f} MB"),
+            urwid.Text(f"  Main Entry: {self.zim.archive.main_entry.title}"),
+            urwid.Text(f"  Article Count: {self.zim.archive.article_count}"),
+
         ])
         self.content_list = urwid.ListBox(self.content_walker)
         
-        self.status_text = urwid.Text("Mode: Search | Press '/' to search")
+        self.status_text = urwid.Text("Mode: Start | /: Search | r: Random | q: Quit")
         status_bar = urwid.AttrMap(self.status_text, 'status')
         
         self.frame = urwid.Frame(
@@ -210,10 +213,10 @@ class WikiApp:
             self.result_widgets.append(mapped)
         
         if len(self.content_walker) > 1:
-            self.content_walker.set_focus(1)
+            self.content_walker.focus_position = 1
         
         self.mode = self.MODE_RESULTS
-        self.update_status("Mode: Results | ↑↓: Navigate | Enter: Select | /: New search | q: Quit")
+        self.update_status("Mode: Results | ↑↓: Navigate | Enter or →: Select | /: Search | r: Random | q: Quit")
     
     def load_article(self, path):
         """Load and display an article"""
@@ -238,14 +241,14 @@ class WikiApp:
         self.content_walker.extend(widgets)
         
         if len(self.content_walker) > 0:
-            self.content_walker.set_focus(0)
+            self.content_walker.focus_position = 0
         
         self.history.append(path)
         self.mode = self.MODE_ARTICLE
         
         link_count = len(self.current_links)
         self.update_status(
-            f"Mode: Article | {link_count} links | ↑↓: Navigate links | →: Follow | Space: Page Down | ←: Back | /: Search | q: Quit"
+            f"Mode: Article | {link_count} links | ↑↓: Navigate | →: Follow | ←: Back | Space: Page Down | /: Search | r: Random | q: Quit"
         )
     
     def handle_input(self, key):
@@ -254,19 +257,21 @@ class WikiApp:
             raise urwid.ExitMainLoop()
         elif key == '/':
             self.mode = self.MODE_SEARCH
-            self.frame.set_focus('header')
-            self.update_status("Mode: Search | Enter to search | q: Quit")
+            self.frame.focus_position = 'header'
+            self.update_status("Mode: Search | Enter to search")
             return
+        elif key == 'r':
+            self.load_article(self.zim.archive.get_random_entry().path)
         
         if self.mode == self.MODE_SEARCH:
             if key == 'enter':
                 query = self.search_edit.get_edit_text()
                 if query:
                     self.show_search_results(query)
-                    self.frame.set_focus('body')
+                    self.frame.focus_position = 'body'
         
         elif self.mode == self.MODE_RESULTS:
-            if key == 'enter':
+            if key == 'enter' or key == 'right':
                 focused_widget, focus_pos = self.content_walker.get_focus()
                 if hasattr(focused_widget, 'result_path'):
                     self.load_article(focused_widget.result_path)
@@ -327,7 +332,7 @@ class WikiApp:
             
             for i, widget in enumerate(self.content_walker):
                 if widget == target_link:
-                    self.content_walker.set_focus(i)
+                    self.content_walker.focus_position = i
                     self.content_list.set_focus_valign('middle')
                     return
     
@@ -339,7 +344,7 @@ class WikiApp:
             unhandled_input=self.handle_input
         )
         
-        self.frame.set_focus('header')
+        self.frame.focus_postion = 'footer'
         
         self.loop.run()
 
@@ -348,7 +353,7 @@ if __name__ == '__main__':
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python zim_reader.py <path_to_zim_file>")
+        print("Usage: python fatZimReader.py <path_to_zim_file>")
         sys.exit(1)
     
     app = WikiApp(sys.argv[1])
