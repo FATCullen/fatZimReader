@@ -3,6 +3,7 @@ from libzim.reader import Archive
 from libzim.search import Query, Searcher
 from bs4 import BeautifulSoup
 from urllib import parse
+import textwrap
 
 class ZimManager:
     """Handles ZIM file operations"""
@@ -36,9 +37,13 @@ class ArticleParser:
         self.links = []
         self.text_widgets = []
         self.link_widgets = []
+        self.max_width = 80
     
-    def parse(self):
+    def parse(self, max_width=80):
         """Parse HTML and extract text with links"""
+
+        self.max_width = max_width
+
         content = self.soup.find('div', {'id': 'mw-content-text'})
         if not content:
             content = self.soup.find('body')
@@ -46,7 +51,7 @@ class ArticleParser:
         if not content:
             return [urwid.Text("Could not parse article content")]
         
-        for tag in content.find_all(['script', 'style', 'sup', 'table']):
+        for tag in content.find_all(['script', 'style', 'sup']):
             tag.decompose()
         
         self.text_widgets = []
@@ -79,13 +84,12 @@ class ArticleParser:
             elif child.name == 'div':
                 self._process_element(child)
             elif child.name == 'table':
-                pass
-                # self._process_table(child)
+                self._process_table(child)
             elif child.name == 'a':
                 self._process_link(child)
 
     def _process_link(self, link_elem):
-        """Process standalone links"""
+        """Process links"""
         href = link_elem.get('href', '')
         is_external = (
             href.startswith('http://') or 
@@ -129,13 +133,120 @@ class ArticleParser:
             if text:
                 self.text_widgets.append(urwid.Text(f"  • {text}"))
 
-    def _process_table(self, table_elem):
-        pass
-        # df_list = pd.read_html(str(table_elem))
-        # if df_list:
-        #     df = df_list[0]
-        #     self.text_widgets.append(urwid.Text(df.to_string(index=False)))
 
+    def _process_table(self, element):
+        """Process <table> HTML element into a formatted ASCII/Unicode table"""
+        rows = []
+        for row_el in element.find_all("tr"):
+            row = []
+            for cell in row_el.find_all(["td", "th"]):
+                text = cell.get_text(" ", strip=True)
+                colspan = int(cell.get("colspan", 1))
+                rowspan = int(cell.get("rowspan", 1))
+                row.append((text, colspan, rowspan))
+            rows.append(row)
+
+        if not rows:
+            return [urwid.Text("(empty table)")]
+
+        grid = []
+        occupied = {}
+        for r_idx, row in enumerate(rows):
+            grid_row = []
+            c_idx = 0
+            for text, colspan, rowspan in row:
+                while (r_idx, c_idx) in occupied:
+                    grid_row.append(occupied[(r_idx, c_idx)][0])
+                    occupied[(r_idx, c_idx)][1] -= 1
+                    if occupied[(r_idx, c_idx)][1] <= 0:
+                        del occupied[(r_idx, c_idx)]
+                    c_idx += 1
+
+                cell_text = text
+                grid_row.append(cell_text)
+
+                for _ in range(1, colspan):
+                    grid_row.append("")
+
+                if rowspan > 1:
+                    for rr in range(1, rowspan):
+                        occupied[(r_idx+rr, c_idx)] = [cell_text, rowspan-rr]
+
+                c_idx += colspan
+            grid.append(grid_row)
+
+        num_cols = max(len(r) for r in grid)
+        for row in grid:
+            while len(row) < num_cols:
+                row.append("")
+
+        term_width = getattr(self, 'max_width', 80)
+        col_widths = [0] * num_cols
+        for c in range(num_cols):
+            longest_word = 1
+            longest_cell = 1
+            for r in range(len(grid)):
+                cell = str(grid[r][c])
+                if not cell:
+                    continue
+                longest_cell = max(longest_cell, len(cell))
+                for word in cell.split():
+                    longest_word = max(longest_word, len(word))
+            col_widths[c] = max(longest_word, min(longest_cell, 30))
+
+        total = sum(col_widths) + (3 * (num_cols - 1)) + 2
+        if total > term_width:
+            scale = (term_width - (3 * (num_cols - 1)) - 2) / sum(col_widths)
+            col_widths = [max(5, int(w * scale)) for w in col_widths]
+
+        def wrap_cell_text(text, width):
+            if not text:
+                return [""]
+            words = text.split()
+            wrapped_lines = []
+            for word in words:
+                if len(word) <= width:
+                    wrapped_lines.append(word)
+                else:
+                    chunks = textwrap.wrap(word, width-1)
+                    chunks = [c + "-" if i < len(chunks)-1 else c
+                            for i, c in enumerate(chunks)]
+                    wrapped_lines.extend(chunks)
+            return textwrap.wrap(" ".join(wrapped_lines), width) or [""]
+
+        wrapped_grid = []
+        for row in grid:
+            wrapped_row = []
+            for c, cell in enumerate(row):
+                wrapped_row.append(wrap_cell_text(str(cell), col_widths[c]))
+            wrapped_grid.append(wrapped_row)
+
+        def make_separator(left, mid, right, fill="─"):
+            parts = []
+            for w in col_widths:
+                parts.append(fill * (w + 2))
+            return left + mid.join(parts) + right
+
+        lines = []
+        lines.append(make_separator("┌", "┬", "┐"))
+        for r, row in enumerate(wrapped_grid):
+            row_height = max(len(cell) for cell in row)
+            for line_idx in range(row_height):
+                line_parts = []
+                for c, cell in enumerate(row):
+                    content = cell[line_idx] if line_idx < len(cell) else ""
+                    line_parts.append(" " + content.ljust(col_widths[c]) + " ")
+                lines.append("│" + "│".join(line_parts) + "│")
+
+            if r == 0:
+                lines.append(make_separator("├", "┼", "┤"))
+            elif r < len(wrapped_grid)-1:
+                lines.append(make_separator("├", "┼", "┤"))
+
+        lines.append(make_separator("└", "┴", "┘"))
+
+        for l in lines:
+            self.text_widgets.append(urwid.Text(l))
 
 class SelectableText(urwid.Text):
     """Text widget that can be selected with keyboard"""
@@ -240,8 +351,9 @@ class WikiApp:
             self.content_walker.append(urwid.Text(html))
             return
         
+        cols, _ = self.loop.screen.get_cols_rows()
         parser = ArticleParser(html)
-        widgets = parser.parse()
+        widgets = parser.parse(max_width=cols - 4)
         self.current_links = parser.links
         self.link_widgets = parser.link_widgets
         self.current_link_index = 0
