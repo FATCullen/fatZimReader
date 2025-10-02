@@ -132,7 +132,8 @@ class ArticleParser:
             text = li.get_text().strip()
             if text:
                 self.text_widgets.append(urwid.Text(f"  • {text}"))
-
+        for link_elem in list_elem.find_all('a', href=True):
+                self._process_link(link_elem)
 
     def _process_table(self, element):
         """Process <table> HTML element into a formatted ASCII/Unicode table"""
@@ -141,8 +142,8 @@ class ArticleParser:
             row = []
             for cell in row_el.find_all(["td", "th"]):
                 text = cell.get_text(" ", strip=True)
-                colspan = int(cell.get("colspan", 1))
-                rowspan = int(cell.get("rowspan", 1))
+                colspan = min(int(cell.get("colspan", 1)), 10)
+                rowspan = min(int(cell.get("rowspan", 1)), 10)
                 row.append((text, colspan, rowspan))
             rows.append(row)
 
@@ -247,6 +248,8 @@ class ArticleParser:
 
         for l in lines:
             self.text_widgets.append(urwid.Text(l))
+        for link_elem in element.find_all('a', href=True):
+                self._process_link(link_elem)
 
 class SelectableText(urwid.Text):
     """Text widget that can be selected with keyboard"""
