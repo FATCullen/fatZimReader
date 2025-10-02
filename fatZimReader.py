@@ -30,7 +30,7 @@ class ZimManager:
 
 
 class ArticleParser:
-    """Converts Wikipedia HTML to terminal-friendly format"""
+    """Converts HTML to terminal-friendly format"""
     
     def __init__(self, html_content):
         self.soup = BeautifulSoup(html_content, 'html.parser')
@@ -76,7 +76,7 @@ class ArticleParser:
                 text = child.get_text().strip()
                 self.text_widgets.append(urwid.Divider())
                 self.text_widgets.append(
-                    urwid.Text(('heading', f"{'#' * level} {text}"))
+                    urwid.Text(('heading', f"{'#' * level * 2} {text} {'#' * level * 2}"))
                 )
                 self.text_widgets.append(urwid.Divider())
             elif child.name in ['ul', 'ol']:
@@ -142,8 +142,8 @@ class ArticleParser:
             row = []
             for cell in row_el.find_all(["td", "th"]):
                 text = cell.get_text(" ", strip=True)
-                colspan = min(int(cell.get("colspan", 1)), 10)
-                rowspan = min(int(cell.get("rowspan", 1)), 10)
+                colspan = min(int(cell.get("colspan", 1)), 5)
+                rowspan = min(int(cell.get("rowspan", 1)), 5)
                 row.append((text, colspan, rowspan))
             rows.append(row)
 
@@ -247,7 +247,7 @@ class ArticleParser:
         lines.append(make_separator("└", "┴", "┘"))
 
         for l in lines:
-            self.text_widgets.append(urwid.Text(l))
+            self.text_widgets.append(urwid.Text(l[:self.max_width]))
         for link_elem in element.find_all('a', href=True):
                 self._process_link(link_elem)
 
@@ -356,7 +356,7 @@ class WikiApp:
         
         cols, _ = self.loop.screen.get_cols_rows()
         parser = ArticleParser(html)
-        widgets = parser.parse(max_width=cols - 4)
+        widgets = parser.parse(max_width=cols - 2)
         self.current_links = parser.links
         self.link_widgets = parser.link_widgets
         self.current_link_index = 0
